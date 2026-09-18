@@ -52,6 +52,13 @@ Host 字段:`Id, IsConnect, Addr(外网IP), LocalIP, HostName, OsName, UserName,
 
 上传/下载流程:
 - 下载:先 `downloadtoserver` → 轮询 `getdownloadper` 到 `pre>=100` → `GET downloadtobrowser`
+  - ⚠️ **`getdownloadper` 的 `pre` 是 `已暂存字节 / 请求里的 size × 100`**:传 `size:0` 会**恒回 `100`**,
+    哪怕服务端才写了 3 MB / 7.4 MB(实测)。必须传入目标文件的真实大小(取自 `/file/ls` 的 `size`),
+    `pre` 才是真进度,否则会在文件还在写时就去 `downloadtobrowser` 拉到**截断的文件**。
+  - `downloadtoserver` 的 HTTP 响应会**一直挂到整份文件暂存完**(大文件几十秒到几十分钟),但即使客户端中途断开,
+    服务端也会继续把文件拉完(实测:客户端 3 秒超时断开后,暂存目录里的文件仍从 3 MB 增长到完整的 7.4 MB)。
+    因此调用方可以"后台发起 + 短轮询",超时不等于失败,重试会命中已暂存的副本(`pre` 直接是 100)。
+  - 暂存目录是服务端本地的 `download/<客户端Id>/<文件名>`,**不通过 HTTP 静态提供**(`GET /download/<id>/<file>` 实测 404)。
 - 上传:`multipart/form-data`,`file` 字段文件名即主机侧文件名
 
 ## 命令控制(终端 WebSocket)

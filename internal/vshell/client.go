@@ -31,9 +31,11 @@ type Config struct {
 type Client struct {
 	cfg      Config
 	http     *http.Client
+	longHTTP *http.Client // bulk transfers; see callLong
 	mu       sync.Mutex
 	jwt      string
 	loginURL string
+	shells   map[int]shellKind // host id -> interactive shell dialect (cached)
 }
 
 // NewClient builds a Client from the given configuration.
@@ -53,10 +55,16 @@ func NewClient(cfg Config) *Client {
 	return &Client{
 		cfg:      cfg,
 		http:     &http.Client{Timeout: cfg.Timeout},
+		longHTTP: &http.Client{Timeout: bulkTimeout},
 		jwt:      cfg.Token,
 		loginURL: api + "/login",
+		shells:   map[int]shellKind{},
 	}
 }
+
+// bulkTimeout bounds transfers that move whole files (server-side staging,
+// uploads). The interactive timeout is far too small for those.
+const bulkTimeout = 24 * time.Hour
 
 // apiURL joins the API prefix to a path, e.g. "/client/list" -> "http://h:8082/api/client/list".
 func (c *Client) apiURL(path string) string {
@@ -156,6 +164,19 @@ type APIResponse struct {
 // raw result payload. It transparently logs in / refreshes the token when
 // the cached token is missing or rejected.
 func (c *Client) Call(ctx context.Context, path string, body any) (json.RawMessage, error) {
+	return c.call(ctx, c.http, path, body)
+}
+
+// callLong is Call over the bulk-transfer client. Staging a multi-megabyte file
+// on the server (POST /file/downloadtoserver) legitimately outlasts the
+// interactive timeout, and dropping to the shared client there is what made big
+// downloads fail while equally big uploads succeeded.
+func (c *Client) callLong(ctx context.Context, path string, body any) (json.RawMessage, error) {
+	return c.call(ctx, c.longHTTP, path, body)
+}
+
+// call is the shared POST implementation; httpClient selects the timeout budget.
+func (c *Client) call(ctx context.Context, httpClient *http.Client, path string, body any) (json.RawMessage, error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		tok, err := c.token(ctx)
 		if err != nil {
@@ -175,7 +196,7 @@ func (c *Client) Call(ctx context.Context, path string, body any) (json.RawMessa
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Token", tok)
-		resp, err := c.http.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			return nil, err
 		}
