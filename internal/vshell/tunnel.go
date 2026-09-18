@@ -7,6 +7,8 @@ import (
 )
 
 // Tunnel is a tunnel / proxy entry as shown on the /tunnel/list page.
+// NOTE: Port is a listening port on the *v_shell server host*, not on the bound
+// client's host — the client only relays the traffic to Target.
 type Tunnel struct {
 	Id        int    `json:"Id"`
 	ClientId  int    `json:"ClientId"`

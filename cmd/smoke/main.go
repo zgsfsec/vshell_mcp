@@ -55,22 +55,22 @@ func main() {
 	}
 
 	fmt.Println("== exec: id ==")
-	out, err := c.Exec(ctx, id, "id", "", 60*time.Second)
+	res, err := c.Exec(ctx, id, "id", "", 60*time.Second)
 	must(err)
-	fmt.Printf("  -> %q\n", out)
+	fmt.Printf("  exit=%d timedOut=%v -> %q\n", res.ExitCode, res.TimedOut, res.Output)
 
 	fmt.Println("== exec: uname -a (workdir /var/log) ==")
-	out, err = c.Exec(ctx, id, "uname -a && pwd", "/var/log", 60*time.Second)
+	res, err = c.Exec(ctx, id, "uname -a && pwd", "/var/log", 60*time.Second)
 	must(err)
-	fmt.Printf("  -> %q\n", out)
+	fmt.Printf("  exit=%d timedOut=%v -> %q\n", res.ExitCode, res.TimedOut, res.Output)
 
 	fmt.Println("== write file ==")
 	must(c.WriteFile(ctx, id, "/tmp", "mcp_smoke.txt", "hello from vshell-mcp smoke\nline2\n"))
 
 	fmt.Println("== read file ==")
-	content, b64, err := c.ReadFile(ctx, id, "/tmp", "mcp_smoke.txt")
+	fc, err := c.ReadFile(ctx, id, "/tmp", "mcp_smoke.txt")
 	must(err)
-	fmt.Printf("  -> base64=%v content=%q\n", b64, content)
+	fmt.Printf("  -> base64=%v replacedRunes=%d content=%q\n", fc.Base64Encoded, fc.ReplacedRunes, fc.Content)
 
 	fmt.Println("== upload file ==")
 	tmp, _ := os.CreateTemp("", "mcp_smoke_up_*.txt")
@@ -85,7 +85,7 @@ func main() {
 	dl, _ := os.CreateTemp("", "mcp_smoke_dl_*.txt")
 	dl.Close()
 	os.Remove(dl.Name())
-	n, err := c.DownloadFile(ctx, id, "/tmp", "mcp_smoke.txt", dl.Name())
+	n, err := c.DownloadFile(ctx, id, "/tmp", "mcp_smoke.txt", dl.Name(), 0)
 	must(err)
 	data, _ := os.ReadFile(dl.Name())
 	fmt.Printf("  -> bytes=%d content=%q\n", n, string(data))

@@ -76,6 +76,46 @@ func (c *Client) ListListeners(ctx context.Context, status *bool, mode string) (
 
 // AddListener creates a new listener. (Deletion is intentionally not exposed.)
 func (c *Client) AddListener(ctx context.Context, req AddListenerRequest) error {
+	applyListenerDefaults(&req)
+	_, err := c.Call(ctx, "/listener/add", req)
+	return err
+}
+
+// ListenerEditRequest is the payload of POST /listener/edit: the add payload
+// plus the target listener Id.
+type ListenerEditRequest struct {
+	Id int `json:"Id"`
+	AddListenerRequest
+}
+
+// EditListener rewrites a listener's configuration. The console's edit form
+// carries the same fields as add, so callers should read the current values with
+// ListListeners first and pass them back (fields left zero take the same
+// defaults as add).
+func (c *Client) EditListener(ctx context.Context, id int, req AddListenerRequest) error {
+	applyListenerDefaults(&req)
+	_, err := c.Call(ctx, "/listener/edit", ListenerEditRequest{Id: id, AddListenerRequest: req})
+	return err
+}
+
+// SetListenerStatus starts (enabled) or stops a listener.
+func (c *Client) SetListenerStatus(ctx context.Context, id int, enabled bool) error {
+	path := "/listener/stop"
+	if enabled {
+		path = "/listener/start"
+	}
+	_, err := c.Call(ctx, path, map[string]any{"id": id})
+	return err
+}
+
+// SetListenerRemark updates a listener's remark.
+func (c *Client) SetListenerRemark(ctx context.Context, id int, remark string) error {
+	_, err := c.Call(ctx, "/listener/editremark", map[string]any{"id": id, "remark": remark})
+	return err
+}
+
+// applyListenerDefaults fills the fields the console also defaults.
+func applyListenerDefaults(req *AddListenerRequest) {
 	if req.Mode == "" {
 		req.Mode = "tcp"
 	}
@@ -85,6 +125,4 @@ func (c *Client) AddListener(ctx context.Context, req AddListenerRequest) error 
 	if req.PingInterval == 0 {
 		req.PingInterval = 10
 	}
-	_, err := c.Call(ctx, "/listener/add", req)
-	return err
 }

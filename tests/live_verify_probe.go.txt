@@ -1,0 +1,111 @@
+package vshell
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// TEMPORARY probe (deleted after verification): re-checks the three items left
+// unverified when the AV quarantined the previous test binary.
+//
+// Run: VSHELL_PROBE=1 VSHELL_PASSWORD=... go test ./internal/vshell -run TestZZVerify -v
+func TestZZVerify(t *testing.T) {
+	if os.Getenv("VSHELL_PROBE") != "1" {
+		t.Skip("set VSHELL_PROBE=1")
+	}
+	base := os.Getenv("VSHELL_URL")
+	if base == "" {
+		base = "http://127.0.0.1:8082"
+	}
+	c := NewClient(Config{BaseURL: base, Username: "admin", Password: os.Getenv("VSHELL_PASSWORD"), Timeout: 60 * time.Second})
+	ctx := context.Background()
+	hosts, err := c.ListHosts(ctx, nil)
+	if err != nil {
+		t.Fatalf("list hosts: %v", err)
+	}
+	var id int
+	for _, h := range hosts {
+		if h.IsConnect {
+			id = h.Id
+			break
+		}
+	}
+	if id == 0 {
+		t.Fatal("no online host")
+	}
+
+	// 1. No sentinel prompt may leak into the captured output, for any shape of
+	// command (single output, multi-line, no trailing newline, big output).
+	for _, tc := range []struct {
+		name, command, want string
+	}{
+		{"wmic", `wmic os get Caption /value`, "Caption=Microsoft Windows"},
+		{"whoami", `whoami`, "god\\administrator"},
+		{"for loop", `for /L %i in (1,1,5) do @echo item-%i`, "item-5"},
+		{"no newline", `echo|set /p=no-newline`, "no-newline"},
+		{"systeminfo", `systeminfo`, "主机名"},
+	} {
+		res, err := c.Exec(ctx, id, tc.command, "", 60*time.Second)
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if res.TimedOut || res.Interactive != "" {
+			t.Errorf("%s: timedOut=%v interactive=%q", tc.name, res.TimedOut, res.Interactive)
+		}
+		if strings.Contains(res.Output, "MCPP") {
+			t.Errorf("%s: sentinel prompt leaked into output: %q", tc.name, res.Output)
+		}
+		if strings.Contains(res.Output, "\x00") {
+			t.Errorf("%s: NUL byte survived (%d)", tc.name, strings.Count(res.Output, "\x00"))
+		}
+		if !strings.Contains(res.Output, tc.want) {
+			t.Errorf("%s: output %q does not contain %q", tc.name, res.Output, tc.want)
+		}
+		t.Logf("%-11s exit=%-3d len=%-5d out=%q", tc.name, res.ExitCode, len(res.Output), head(res.Output, 60))
+	}
+
+	// 2. A pager must abort immediately with the marker, not burn the timeout.
+	start := time.Now()
+	res, err := c.Exec(ctx, id, `type C:\Windows\System32\cmd.exe | more +0`, "", 30*time.Second)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("pager: %v", err)
+	}
+	if res.Interactive == "" {
+		t.Errorf("pager not detected after %v: timedOut=%v out=%q", elapsed, res.TimedOut, head(res.Output, 80))
+	} else if elapsed > 5*time.Second {
+		t.Errorf("pager detected only after %v", elapsed)
+	} else {
+		t.Logf("pager       aborted in %v, marker=%q", elapsed.Round(time.Millisecond), res.Interactive)
+	}
+
+	// 3. A >3 MB file must download: its staging call used to run on the 60s
+	// interactive client. ntoskrnl.exe is an existing read-only sample, so this
+	// touches nothing on the target (fsutil would need elevation).
+	const bigPath, bigName = `C:\Windows\System32`, "ntoskrnl.exe"
+	out := filepath.Join(t.TempDir(), bigName)
+	start = time.Now()
+	n, err := c.DownloadFile(ctx, id, bigPath, bigName, out, 0)
+	if err != nil {
+		t.Fatalf("DownloadFile: %v", err)
+	}
+	if n < 3_000_000 {
+		t.Errorf("downloaded %d bytes; want a >3 MB sample to exercise staging", n)
+	}
+	if fi, err := os.Stat(out); err != nil || fi.Size() != n {
+		t.Errorf("local file does not match the reported size %d (err=%v)", n, err)
+	}
+	t.Logf("download    %s bytes=%d in %v", bigName, n, time.Since(start).Round(time.Second))
+}
+
+func head(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
