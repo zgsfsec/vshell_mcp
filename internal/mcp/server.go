@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -43,15 +44,28 @@ func New(vs *vshell.Client, baseURL, version string) *Server {
 // Handler returns the underlying MCP server (for embedding).
 func (s *Server) Handler() *server.MCPServer { return s.srv }
 
-// StartSSE runs the legacy SSE transport on addr. baseURL, when non-empty,
-// is advertised as the message endpoint host (use when the MCP server sits
-// behind a proxy). When empty the client's own request host is used.
-func (s *Server) StartSSE(addr, baseURL string) error {
+// HTTPHandler builds the HTTP handler serving both MCP transports on one
+// port: the legacy SSE transport at /sse (+ /message) and the Streamable HTTP
+// transport at /mcp. baseURL, when non-empty, is advertised as the SSE message
+// endpoint host (use when the MCP server sits behind a proxy). When empty the
+// client's own request host is used.
+func (s *Server) HTTPHandler(baseURL string) http.Handler {
 	sse := server.NewSSEServer(s.srv)
 	if baseURL != "" {
 		sse = server.NewSSEServer(s.srv, server.WithBaseURL(baseURL))
 	}
-	return sse.Start(addr)
+	streamable := server.NewStreamableHTTPServer(s.srv, server.WithEndpointPath("/mcp"))
+
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", streamable)
+	mux.Handle("/", sse) // /sse and /message; 404 otherwise
+	return mux
+}
+
+// StartSSE runs the MCP HTTP server on addr. Both transports are served:
+// SSE at /sse and Streamable HTTP at /mcp (see HTTPHandler).
+func (s *Server) StartSSE(addr, baseURL string) error {
+	return http.ListenAndServe(addr, s.HTTPHandler(baseURL))
 }
 
 // tools registers every MCP tool and its handler.

@@ -26,6 +26,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -41,7 +42,7 @@ var version = "dev"
 
 func init() {
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), `vshell-mcp — v_shell 管理平台 MCP 服务(SSE 传输)
+		fmt.Fprintf(flag.CommandLine.Output(), `vshell-mcp — v_shell 管理平台 MCP 服务(SSE + Streamable HTTP)
 
 把 v_shell 的命令控制、文件管理、隧道/监听管理、客户端生成、服务器信息等能力开放给 AI。
 
@@ -55,7 +56,8 @@ func init() {
 
 选项:
   -token     预置 JWT,跳过账号密码登录
-  -port      MCP SSE 服务监听端口(默认 19080)
+  -bind      MCP 服务监听地址(默认 127.0.0.1)
+  -port      MCP 服务监听端口(默认 19080)
   -mcpurl    MCP 服务器对外可达地址(置于反向代理后时设置)
   -prefix    v_shell API 路径前缀(默认 /api)
   -timeout   单次请求超时秒数(默认 60)
@@ -64,6 +66,7 @@ func init() {
 
 接入(Claude Code):
   claude mcp add vshell --type sse --url http://127.0.0.1:19080/sse
+  Streamable HTTP 客户端:http://127.0.0.1:19080/mcp
 
 注:-h 已绑定为 v_shell 地址参数(而非帮助);查看帮助请用 -help。
 `)
@@ -87,9 +90,9 @@ func main() {
 	}
 	cancel()
 
-	addr := fmt.Sprintf(":%d", cfg.port)
+	addr := net.JoinHostPort(cfg.bind, cfg.portStr())
 	srv := mcp.New(vs, cfg.vshell.BaseURL, version)
-	fmt.Printf("v_shell MCP server listening on %s  (SSE endpoint: %s/sse)\n", addr, "http://127.0.0.1:"+cfg.portStr())
+	fmt.Printf("v_shell MCP server listening on %s  (SSE endpoint: %s/sse, Streamable HTTP endpoint: %s/mcp)\n", addr, "http://127.0.0.1:"+cfg.portStr(), "http://127.0.0.1:"+cfg.portStr())
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -105,6 +108,7 @@ func main() {
 
 type config struct {
 	vshell vshell.Config
+	bind   string
 	port   int
 	mcpURL string
 }
@@ -117,7 +121,8 @@ func parseFlags() (*config, error) {
 		user    = flag.String("u", "admin", "登录账号")
 		pass    = flag.String("p", "", "登录密码(必填,除非提供了 -token)")
 		token   = flag.String("token", "", "预置 JWT,设置后跳过账号密码登录")
-		port    = flag.Int("port", 19080, "MCP SSE 服务监听端口")
+		bind    = flag.String("bind", "127.0.0.1", "MCP 服务监听地址(默认 127.0.0.1,仅本机可访问)")
+		port    = flag.Int("port", 19080, "MCP 服务监听端口")
 		mcpURL  = flag.String("mcpurl", "", "MCP 服务器对外可达地址(置于反向代理后时设置)")
 		prefix  = flag.String("prefix", "/api", "v_shell API 路径前缀")
 		timeout = flag.Int("timeout", 60, "单次 HTTP 请求超时(秒)")
@@ -148,6 +153,7 @@ func parseFlags() (*config, error) {
 			Token:    *token,
 			Timeout:  time.Duration(*timeout) * time.Second,
 		},
+		bind:   *bind,
 		port:   *port,
 		mcpURL: *mcpURL,
 	}, nil

@@ -1,6 +1,6 @@
 # vshell-mcp
 
-把 **v_shell 管理平台** 的命令控制、文件管理、隧道代理、监听管理、客户端生成等能力封装为 **MCP Server(SSE 传输)**,让 AI 可以直接操作平台上的任意受管主机。
+把 **v_shell 管理平台** 的命令控制、文件管理、隧道代理、监听管理、客户端生成等能力封装为 **MCP Server**,同时提供 **SSE** 与 **Streamable HTTP** 两种传输,让 AI 可以直接操作平台上的任意受管主机。
 
 ## ✨ 功能特性
 
@@ -18,8 +18,9 @@
 ## 工作原理
 
 ```
-AI 客户端(Claude Code 等)
-   │  MCP over SSE  (type: sse, url: http://<MCP服务器>:19080/sse)
+AI 客户端(Claude Code / Claude Desktop 等支持 MCP 的客户端)
+   │  MCP over SSE            http://<MCP服务器>:19080/sse
+   │  MCP over Streamable HTTP http://<MCP服务器>:19080/mcp
    ▼
 vshell-mcp  (本仓库,Go 编写)
    │  HTTP API: /api/login、/api/client/list、/api/file/*、/api/tunnel/*(POST JSON)
@@ -60,7 +61,8 @@ go build -o vshell-mcp .
 | `-u <user>` | ⭕* | `admin` | 登录账号 |
 | `-p <pass>` | ⭕* | - | 登录密码 |
 | `-token` | ⭕ | - | 预置 JWT,设置后跳过账号密码登录 |
-| `-port` | ⭕ | `19080` | MCP SSE 服务监听端口 |
+| `-bind` | ⭕ | `127.0.0.1` | MCP 服务监听地址(默认仅本机;设 `0.0.0.0` 供其它机器访问) |
+| `-port` | ⭕ | `19080` | MCP 服务监听端口 |
 | `-mcpurl` | ⭕ | 空 | MCP 服务器对外可达地址(置于反向代理后时设置) |
 | `-prefix` | ⭕ | `/api` | v_shell API 路径前缀 |
 | `-timeout` | ⭕ | `60` | 单次请求超时(秒) |
@@ -72,7 +74,7 @@ go build -o vshell-mcp .
 启动时先做一次登录/连通性校验,凭据错误会直接报错退出。正常启动:
 
 ```
-v_shell MCP server listening on :19080  (SSE endpoint: http://127.0.0.1:19080/sse)
+v_shell MCP server listening on 127.0.0.1:19080  (SSE endpoint: http://127.0.0.1:19080/sse, Streamable HTTP endpoint: http://127.0.0.1:19080/mcp)
 ```
 
 ## 接入 AI 客户端
@@ -98,9 +100,37 @@ claude mcp add vshell --type sse --url http://127.0.0.1:19080/sse
 
 > MCP 服务运行在其它机器时,`url` 填该机器的地址与端口;若开了 `-mcpurl`,填它生成的地址。
 
+### 支持 Streamable HTTP 的客户端
+
+```json
+{
+  "mcpServers": {
+    "vshell": {
+      "type": "streamable-http",
+      "url": "http://127.0.0.1:19080/mcp"
+    }
+  }
+}
+```
+
 ### 其它支持 SSE MCP 的客户端
 
-通用配置:`type: sse`,`url: http://<mcp服务器>:19080/sse`。
+通用配置:`type: sse`,`url: http://<mcp服务器>:19080/sse`;支持 Streamable HTTP 的客户端用 `http://<mcp服务器>:19080/mcp`。
+
+## 安装为系统服务(开机自启)
+
+```bash
+go build -trimpath -ldflags "-s -w" -o vshell-mcp .
+sudo install -m 0755 vshell-mcp /usr/local/bin/vshell-mcp
+
+# 按实际 v_shell 地址/账号/密码改好后再安装单元
+sudo install -m 600 deploy/vshell-mcp.service /etc/systemd/system/vshell-mcp.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now vshell-mcp.service
+systemctl status vshell-mcp --no-pager
+```
+
+> 单元文件含登录密码,故权限设为 `600`;同时 `Requires=vshell.service`,后端重启后本服务会被连带拉起。
 
 ## 工具清单(27 个)
 

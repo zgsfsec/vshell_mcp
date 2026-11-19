@@ -1,0 +1,19 @@
+[Unit]
+Description=VShell MCP Server (SSE + Streamable HTTP transport for MCP clients)
+Documentation=file:///opt/vshell-mcp/README.md
+After=network-online.target vshell.service
+Wants=network-online.target
+Requires=vshell.service
+
+[Service]
+Type=simple
+User=vshell
+Group=vshell
+WorkingDirectory=/opt/vshell-mcp
+# 登录密码请改成实际值;本单元含凭据,安装时 chmod 600。
+ExecStart=/usr/local/bin/vshell-mcp -h http://127.0.0.1:39082 -u admin -p YOUR_PASSWORD -bind 127.0.0.1 -port 19080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
